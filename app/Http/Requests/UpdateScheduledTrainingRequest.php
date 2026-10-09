@@ -8,12 +8,35 @@ use App\Models\TrainingGroup;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
 class UpdateScheduledTrainingRequest extends FormRequest
 {
+    /** @var list<int|string> */
+    private array $submittedFields = [];
+
+    /** @return array<string, mixed> */
+    public function validatedForUpdate(ScheduledTraining $scheduledTraining): array
+    {
+        $attributes = Arr::only($this->validated(), $this->submittedFields);
+        $rules = $this->rules();
+
+        Validator::make(
+            array_replace($scheduledTraining->only(array_keys($rules)), $attributes),
+            $rules,
+            $this->messages(),
+            $this->attributes(),
+        )->validate();
+
+        return $attributes;
+    }
+
     protected function prepareForValidation(): void
     {
+        $this->submittedFields = array_keys($this->all());
+
         $scheduledTraining = $this->route('scheduled_training');
 
         if (! $scheduledTraining instanceof ScheduledTraining) {

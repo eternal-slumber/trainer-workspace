@@ -11,7 +11,9 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -87,9 +89,39 @@ class ScheduledTrainingController extends Controller
         UpdateScheduledTrainingRequest $request,
         ScheduledTraining $scheduledTraining,
     ): RedirectResponse {
-        $scheduledTraining->update($request->validated());
+        DB::transaction(function () use ($request, $scheduledTraining): void {
+            $lockedTraining = $request->user()
+                ->scheduledTrainings()
+                ->lockForUpdate()
+                ->findOrFail($scheduledTraining->id);
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Training updated.')]);
+            $attributes = $request->validatedForUpdate($lockedTraining);
+            $errors = [];
+
+            foreach (['trainee_id', 'training_group_id'] as $field) {
+                if (! array_key_exists($field, $attributes)) {
+                    continue;
+                }
+
+                $attributes[$field] = $attributes[$field] === null
+                    ? null : (int) $attributes[$field];
+
+                if ($attributes[$field] !== $lockedTraining->{$field}) {
+                    $errors[$field] = 'Нельзя изменить клиента или группу: для этой тренировки уже создан план.';
+                }
+            }
+
+            if ($errors !== [] && $lockedTraining->trainingPlan()->exists()) {
+                throw ValidationException::withMessages($errors);
+            }
+
+            $lockedTraining->update($attributes);
+        });
+
+        Inertia::flash('toast', [
+            'type' => 'success',
+            'message' => __('Training updated.'),
+        ]);
 
         return to_route('scheduled-trainings.show', $scheduledTraining);
     }
@@ -145,12 +177,12 @@ class ScheduledTrainingController extends Controller
             'notes' => $scheduledTraining->notes,
             'training_plan' => $scheduledTraining->relationLoaded('trainingPlan')
                 && $scheduledTraining->trainingPlan !== null
-                    ? [
-                        'id' => $scheduledTraining->trainingPlan->id,
-                        'title' => $scheduledTraining->trainingPlan->title,
-                        'status' => $scheduledTraining->trainingPlan->status,
-                    ]
-                    : null,
+                ? [
+                    'id' => $scheduledTraining->trainingPlan->id,
+                    'title' => $scheduledTraining->trainingPlan->title,
+                    'status' => $scheduledTraining->trainingPlan->status,
+                ]
+                : null,
         ];
     }
 
