@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\TrainingPlans\SaveTrainingPlan;
 use App\Models\Exercise;
 use App\Models\ScheduledTraining;
 use App\Models\TrainingPlan;
@@ -103,6 +104,50 @@ test('only one plan can be created for a scheduled training', function () {
 
     expect(TrainingPlan::query()->count())->toBe(1);
 });
+
+test('manual plan creation inherits the current subject instead of a stale model', function (
+    string $replacementType,
+) {
+    $user = User::factory()->create();
+    $scheduledTraining = createPlanScheduledTraining($user);
+    $staleTraining = $scheduledTraining->fresh();
+    $replacement = $replacementType === 'trainee'
+        ? $user->trainees()->create([
+            'name' => 'Другой клиент',
+            'level' => 'Начинающий',
+            'goal' => 'Развить силу',
+        ])
+        : $user->trainingGroups()->create([
+            'name' => 'Другая группа',
+            'sport_type' => 'ОФП',
+            'age_range' => '18–30',
+            'level' => 'Начинающий',
+            'goal' => 'Развить силу',
+        ]);
+    $subject = [
+        'trainee_id' => $replacementType === 'trainee' ? $replacement->id : null,
+        'training_group_id' => $replacementType === 'training_group' ? $replacement->id : null,
+    ];
+
+    $this->actingAs($user)
+        ->patch(route('scheduled-trainings.update', $scheduledTraining), $subject)
+        ->assertSessionHasNoErrors()
+        ->assertRedirect(route('scheduled-trainings.show', $scheduledTraining));
+
+    $plan = app(SaveTrainingPlan::class)->create(
+        $user,
+        $staleTraining,
+        trainingPlanPayload($staleTraining),
+    );
+
+    expect($plan->scheduled_training_id)->toBe($scheduledTraining->id)
+        ->and($plan->only(['trainee_id', 'training_group_id']))->toBe($subject)
+        ->and($scheduledTraining->fresh()->only(['trainee_id', 'training_group_id']))->toBe($subject)
+        ->and(TrainingPlan::query()->count())->toBe(1);
+})->with([
+    'client changed before creation' => ['trainee'],
+    'client replaced by group before creation' => ['training_group'],
+]);
 
 test('a user cannot create a plan for another users training or exercise', function () {
     $user = User::factory()->create();

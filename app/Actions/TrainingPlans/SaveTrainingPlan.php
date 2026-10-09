@@ -18,6 +18,10 @@ class SaveTrainingPlan
         array $attributes,
     ): TrainingPlan {
         return DB::transaction(function () use ($user, $scheduledTraining, $attributes): TrainingPlan {
+            $scheduledTraining = $user->scheduledTrainings()
+                ->lockForUpdate()
+                ->findOrFail($scheduledTraining->id);
+
             $trainingPlan = new TrainingPlan;
             $trainingPlan->forceFill([
                 ...$this->planAttributes($attributes),
