@@ -19,12 +19,16 @@ class TraineeController extends Controller
     {
         Gate::authorize('viewAny', Trainee::class);
 
+        $archived = $request->boolean('archived');
+
         return Inertia::render('trainees/index', [
             'trainees' => $request->user()
                 ->trainees()
+                ->when($archived, fn ($query) => $query->whereNotNull('archived_at'), fn ($query) => $query->active())
                 ->select(['id', 'name', 'age', 'level', 'goal'])
                 ->latest()
                 ->get(),
+            'archived' => $archived,
         ]);
     }
 
@@ -57,6 +61,7 @@ class TraineeController extends Controller
                 'goal',
                 'restrictions',
                 'notes',
+                'archived_at',
             ]),
             'trainingHistory' => $this->trainingHistory($trainee),
             'agentMemories' => $trainee->agentMemories()
@@ -82,6 +87,7 @@ class TraineeController extends Controller
                 'goal',
                 'restrictions',
                 'notes',
+                'archived_at',
             ]),
         ]);
     }
@@ -99,11 +105,22 @@ class TraineeController extends Controller
     {
         Gate::authorize('delete', $trainee);
 
-        $trainee->delete();
+        $trainee->archive();
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Trainee deleted.')]);
+        Inertia::flash('toast', ['type' => 'success', 'message' => 'Клиент перемещён в архив.']);
 
         return to_route('trainees.index');
+    }
+
+    public function restore(Trainee $trainee): RedirectResponse
+    {
+        Gate::authorize('restore', $trainee);
+
+        $trainee->restore();
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => 'Клиент восстановлен.']);
+
+        return to_route('trainees.show', $trainee);
     }
 
     /** @return Collection<int, covariant array<string, mixed>> */

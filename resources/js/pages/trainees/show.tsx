@@ -1,4 +1,4 @@
-import { Head, Link } from '@inertiajs/react';
+import { Form, Head, Link } from '@inertiajs/react';
 import { Pencil } from 'lucide-react';
 import TraineeController from '@/actions/App/Http/Controllers/TraineeController';
 import AgentMemorySection from '@/components/agent-memory-section';
@@ -56,12 +56,35 @@ export default function TraineesShow({
                                 Редактировать
                             </Link>
                         </Button>
-                        <ResourceDeleteDialog
-                            form={TraineeController.destroy.form(trainee)}
-                            resourceName={trainee.name}
-                        />
+                        {trainee.archived_at ? (
+                            <Form {...TraineeController.restore.form(trainee)}>
+                                {({ processing }) => (
+                                    <Button type="submit" disabled={processing}>
+                                        {processing
+                                            ? 'Восстановление…'
+                                            : 'Восстановить'}
+                                    </Button>
+                                )}
+                            </Form>
+                        ) : (
+                            <ResourceDeleteDialog
+                                form={TraineeController.destroy.form(trainee)}
+                                archive
+                                resourceName={trainee.name}
+                            />
+                        )}
                     </div>
                 </div>
+
+                {trainee.archived_at && (
+                    <p
+                        role="status"
+                        className="rounded-md border bg-muted/30 p-4 text-sm"
+                    >
+                        Запись в архиве. История сохранена. Для новых тренировок
+                        восстановите клиента.
+                    </p>
+                )}
 
                 <Card className="max-w-3xl">
                     <CardContent>

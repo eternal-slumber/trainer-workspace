@@ -86,7 +86,7 @@ test('a user can update their training group', function () {
     expect($trainingGroup->fresh()?->goal)->toBe('Новая цель группы');
 });
 
-test('a user can delete their training group', function () {
+test('a user can archive their training group', function () {
     $user = User::factory()->create();
     $trainingGroup = $user->trainingGroups()->create(trainingGroupPayload());
 
@@ -94,7 +94,8 @@ test('a user can delete their training group', function () {
         ->delete(route('training-groups.destroy', $trainingGroup))
         ->assertRedirect(route('training-groups.index'));
 
-    $this->assertModelMissing($trainingGroup);
+    $this->assertModelExists($trainingGroup);
+    expect($trainingGroup->fresh()->archived_at)->not->toBeNull();
 });
 
 test('a user cannot access another users training group', function () {

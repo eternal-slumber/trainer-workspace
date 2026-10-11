@@ -7,6 +7,7 @@ export type TrainingGroup = {
     goal: string;
     restrictions: string | null;
     notes: string | null;
+    archived_at: string | null;
 };
 
 export type TrainingGroupListItem = Pick<

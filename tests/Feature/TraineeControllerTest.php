@@ -83,7 +83,7 @@ test('a user can update their trainee', function () {
     expect($trainee->fresh()?->goal)->toBe('Новая цель');
 });
 
-test('a user can delete their trainee', function () {
+test('a user can archive their trainee', function () {
     $user = User::factory()->create();
     $trainee = $user->trainees()->create(traineePayload());
 
@@ -91,7 +91,8 @@ test('a user can delete their trainee', function () {
         ->delete(route('trainees.destroy', $trainee))
         ->assertRedirect(route('trainees.index'));
 
-    $this->assertModelMissing($trainee);
+    $this->assertModelExists($trainee);
+    expect($trainee->fresh()->archived_at)->not->toBeNull();
 });
 
 test('a user cannot access another users trainee', function () {

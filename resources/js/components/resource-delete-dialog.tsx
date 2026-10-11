@@ -15,23 +15,33 @@ import type { RouteFormDefinition } from '@/wayfinder';
 type ResourceDeleteDialogProps = {
     form: RouteFormDefinition<'post'>;
     resourceName: string;
+    archive?: boolean;
 };
 
 export default function ResourceDeleteDialog({
     form,
     resourceName,
+    archive = false,
 }: ResourceDeleteDialogProps) {
+    const actionLabel = archive ? 'Архивировать' : 'Удалить';
+
     return (
         <Dialog>
             <DialogTrigger asChild>
-                <Button variant="destructive">Удалить</Button>
+                <Button variant={archive ? 'outline' : 'destructive'}>
+                    {actionLabel}
+                </Button>
             </DialogTrigger>
 
             <DialogContent>
                 <DialogHeader>
-                    <DialogTitle>Удалить «{resourceName}»?</DialogTitle>
+                    <DialogTitle>
+                        {actionLabel} «{resourceName}»?
+                    </DialogTitle>
                     <DialogDescription>
-                        Запись будет удалена без возможности восстановления.
+                        {archive
+                            ? 'История, планы и заметки сохранятся. Запись можно восстановить из архива.'
+                            : 'Запись будет удалена без возможности восстановления.'}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -44,10 +54,14 @@ export default function ResourceDeleteDialog({
                         {({ processing }) => (
                             <Button
                                 type="submit"
-                                variant="destructive"
+                                variant={archive ? 'outline' : 'destructive'}
                                 disabled={processing}
                             >
-                                {processing ? 'Удаление…' : 'Удалить'}
+                                {processing
+                                    ? archive
+                                        ? 'Архивирование…'
+                                        : 'Удаление…'
+                                    : actionLabel}
                             </Button>
                         )}
                     </Form>
