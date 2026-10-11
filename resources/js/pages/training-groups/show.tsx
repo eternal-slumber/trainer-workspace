@@ -1,4 +1,4 @@
-import { Head, Link } from '@inertiajs/react';
+import { Form, Head, Link } from '@inertiajs/react';
 import { Pencil } from 'lucide-react';
 import TrainingGroupController from '@/actions/App/Http/Controllers/TrainingGroupController';
 import AgentMemorySection from '@/components/agent-memory-section';
@@ -50,14 +50,41 @@ export default function TrainingGroupsShow({
                                 Редактировать
                             </Link>
                         </Button>
-                        <ResourceDeleteDialog
-                            form={TrainingGroupController.destroy.form(
-                                trainingGroup,
-                            )}
-                            resourceName={trainingGroup.name}
-                        />
+                        {trainingGroup.archived_at ? (
+                            <Form
+                                {...TrainingGroupController.restore.form(
+                                    trainingGroup,
+                                )}
+                            >
+                                {({ processing }) => (
+                                    <Button type="submit" disabled={processing}>
+                                        {processing
+                                            ? 'Восстановление…'
+                                            : 'Восстановить'}
+                                    </Button>
+                                )}
+                            </Form>
+                        ) : (
+                            <ResourceDeleteDialog
+                                form={TrainingGroupController.destroy.form(
+                                    trainingGroup,
+                                )}
+                                archive
+                                resourceName={trainingGroup.name}
+                            />
+                        )}
                     </div>
                 </div>
+
+                {trainingGroup.archived_at && (
+                    <p
+                        role="status"
+                        className="rounded-md border bg-muted/30 p-4 text-sm"
+                    >
+                        Запись в архиве. История сохранена. Для новых тренировок
+                        восстановите группу.
+                    </p>
+                )}
 
                 <Card className="max-w-3xl">
                     <CardContent>

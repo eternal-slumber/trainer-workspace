@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\ScheduledTrainings\EnsureActiveTrainingSubject;
 use App\Http\Requests\StoreScheduledTrainingRequest;
 use App\Http\Requests\UpdateScheduledTrainingRequest;
 use App\Models\ScheduledTraining;
@@ -47,11 +48,16 @@ class ScheduledTrainingController extends Controller
         return Inertia::render('scheduled-trainings/create', $this->formOptions($request));
     }
 
-    public function store(StoreScheduledTrainingRequest $request): RedirectResponse
-    {
-        $scheduledTraining = $request->user()
-            ->scheduledTrainings()
-            ->create($request->validated());
+    public function store(
+        StoreScheduledTrainingRequest $request,
+        EnsureActiveTrainingSubject $ensureActiveSubject,
+    ): RedirectResponse {
+        $scheduledTraining = DB::transaction(function () use ($request, $ensureActiveSubject): ScheduledTraining {
+            $attributes = $request->validated();
+            $ensureActiveSubject->execute($request->user(), $attributes);
+
+            return $request->user()->scheduledTrainings()->create($attributes);
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Training scheduled.')]);
 
@@ -88,8 +94,9 @@ class ScheduledTrainingController extends Controller
     public function update(
         UpdateScheduledTrainingRequest $request,
         ScheduledTraining $scheduledTraining,
+        EnsureActiveTrainingSubject $ensureActiveSubject,
     ): RedirectResponse {
-        DB::transaction(function () use ($request, $scheduledTraining): void {
+        DB::transaction(function () use ($request, $scheduledTraining, $ensureActiveSubject): void {
             $lockedTraining = $request->user()
                 ->scheduledTrainings()
                 ->lockForUpdate()
@@ -111,8 +118,15 @@ class ScheduledTrainingController extends Controller
                 }
             }
 
-            if ($errors !== [] && $lockedTraining->trainingPlan()->exists()) {
-                throw ValidationException::withMessages($errors);
+            if ($errors !== []) {
+                if ($lockedTraining->trainingPlan()->exists()) {
+                    throw ValidationException::withMessages($errors);
+                }
+
+                $ensureActiveSubject->execute($request->user(), [
+                    ...$lockedTraining->only(['trainee_id', 'training_group_id']),
+                    ...$attributes,
+                ]);
             }
 
             $lockedTraining->update($attributes);
@@ -197,6 +211,14 @@ class ScheduledTrainingController extends Controller
         return [
             'trainees' => $request->user()
                 ->trainees()
+                ->where(function ($query) use ($request): void {
+                    $query->active();
+                    $current = $request->route('scheduled_training');
+
+                    if ($current instanceof ScheduledTraining && $current->trainee_id !== null) {
+                        $query->orWhere('id', $current->trainee_id);
+                    }
+                })
                 ->orderBy('name')
                 ->get(['id', 'name'])
                 ->map(fn (Trainee $trainee): array => [
@@ -205,6 +227,14 @@ class ScheduledTrainingController extends Controller
                 ]),
             'trainingGroups' => $request->user()
                 ->trainingGroups()
+                ->where(function ($query) use ($request): void {
+                    $query->active();
+                    $current = $request->route('scheduled_training');
+
+                    if ($current instanceof ScheduledTraining && $current->training_group_id !== null) {
+                        $query->orWhere('id', $current->training_group_id);
+                    }
+                })
                 ->orderBy('name')
                 ->get(['id', 'name'])
                 ->map(fn (TrainingGroup $trainingGroup): array => [

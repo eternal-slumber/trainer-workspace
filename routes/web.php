@@ -33,7 +33,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         GenerateTrainingPlanController::class,
     )->name('scheduled-trainings.generate-training-plan');
     Route::resource('trainees', TraineeController::class);
+    Route::post('trainees/{trainee}/restore', [TraineeController::class, 'restore'])->name('trainees.restore');
     Route::resource('training-groups', TrainingGroupController::class);
+    Route::post('training-groups/{training_group}/restore', [TrainingGroupController::class, 'restore'])
+        ->name('training-groups.restore');
     Route::resource('scheduled-trainings', ScheduledTrainingController::class);
     Route::resource('exercises', ExerciseController::class);
     Route::resource('agent-memories', AgentMemoryController::class)

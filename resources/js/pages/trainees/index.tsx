@@ -7,18 +7,22 @@ import { create, index, show } from '@/routes/trainees';
 import type { TraineeListItem } from '@/types';
 
 type TraineesIndexProps = {
+    archived: boolean;
     trainees: TraineeListItem[];
 };
 
-export default function TraineesIndex({ trainees }: TraineesIndexProps) {
+export default function TraineesIndex({
+    trainees,
+    archived,
+}: TraineesIndexProps) {
     return (
         <>
-            <Head title="Клиенты" />
+            <Head title={archived ? 'Архив клиентов' : 'Клиенты'} />
 
             <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <Heading
-                        title="Клиенты"
+                        title={archived ? 'Архив клиентов' : 'Клиенты'}
                         description="Индивидуальные клиенты и их тренировочные цели"
                     />
                     <Button asChild>
@@ -29,10 +33,29 @@ export default function TraineesIndex({ trainees }: TraineesIndexProps) {
                     </Button>
                 </div>
 
+                <div className="flex gap-2">
+                    <Button
+                        variant={archived ? 'outline' : 'secondary'}
+                        asChild
+                    >
+                        <Link href={index()}>Активные</Link>
+                    </Button>
+                    <Button
+                        variant={archived ? 'secondary' : 'outline'}
+                        asChild
+                    >
+                        <Link href={index({ query: { archived: 1 } })}>
+                            Архив
+                        </Link>
+                    </Button>
+                </div>
+
                 {trainees.length === 0 ? (
                     <Card>
                         <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                            Клиентов пока нет
+                            {archived
+                                ? 'Архив клиентов пуст'
+                                : 'Клиентов пока нет'}
                         </CardContent>
                     </Card>
                 ) : (

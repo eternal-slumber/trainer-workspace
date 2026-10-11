@@ -48,6 +48,11 @@ class TrainingGroupPolicy
         return $this->owns($user, $trainingGroup);
     }
 
+    public function restore(User $user, TrainingGroup $trainingGroup): Response
+    {
+        return $this->owns($user, $trainingGroup);
+    }
+
     private function owns(User $user, TrainingGroup $trainingGroup): Response
     {
         return $trainingGroup->user_id === $user->id

@@ -19,12 +19,16 @@ class TrainingGroupController extends Controller
     {
         Gate::authorize('viewAny', TrainingGroup::class);
 
+        $archived = $request->boolean('archived');
+
         return Inertia::render('training-groups/index', [
             'trainingGroups' => $request->user()
                 ->trainingGroups()
+                ->when($archived, fn ($query) => $query->whereNotNull('archived_at'), fn ($query) => $query->active())
                 ->select(['id', 'name', 'sport_type', 'age_range', 'level', 'goal'])
                 ->latest()
                 ->get(),
+            'archived' => $archived,
         ]);
     }
 
@@ -58,6 +62,7 @@ class TrainingGroupController extends Controller
                 'goal',
                 'restrictions',
                 'notes',
+                'archived_at',
             ]),
             'trainingHistory' => $this->trainingHistory($trainingGroup),
             'agentMemories' => $trainingGroup->agentMemories()
@@ -84,6 +89,7 @@ class TrainingGroupController extends Controller
                 'goal',
                 'restrictions',
                 'notes',
+                'archived_at',
             ]),
         ]);
     }
@@ -101,11 +107,22 @@ class TrainingGroupController extends Controller
     {
         Gate::authorize('delete', $trainingGroup);
 
-        $trainingGroup->delete();
+        $trainingGroup->archive();
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => __('Training group deleted.')]);
+        Inertia::flash('toast', ['type' => 'success', 'message' => 'Группа перемещена в архив.']);
 
         return to_route('training-groups.index');
+    }
+
+    public function restore(TrainingGroup $trainingGroup): RedirectResponse
+    {
+        Gate::authorize('restore', $trainingGroup);
+
+        $trainingGroup->restore();
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => 'Группа восстановлена.']);
+
+        return to_route('training-groups.show', $trainingGroup);
     }
 
     /** @return Collection<int, covariant array<string, mixed>> */

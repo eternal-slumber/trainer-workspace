@@ -36,7 +36,7 @@ class StoreScheduledTrainingRequest extends FormRequest
                 'required_without:training_group_id',
                 'prohibits:training_group_id',
                 Rule::exists(Trainee::class, 'id')
-                    ->where(fn (Builder $query) => $query->where('user_id', $userId)),
+                    ->where(fn (Builder $query) => $query->where('user_id', $userId)->whereNull('archived_at')),
             ],
             'training_group_id' => [
                 'nullable',
@@ -44,7 +44,7 @@ class StoreScheduledTrainingRequest extends FormRequest
                 'required_without:trainee_id',
                 'prohibits:trainee_id',
                 Rule::exists(TrainingGroup::class, 'id')
-                    ->where(fn (Builder $query) => $query->where('user_id', $userId)),
+                    ->where(fn (Builder $query) => $query->where('user_id', $userId)->whereNull('archived_at')),
             ],
             'starts_at' => ['required', 'date'],
             'ends_at' => ['required', 'date', 'after:starts_at'],

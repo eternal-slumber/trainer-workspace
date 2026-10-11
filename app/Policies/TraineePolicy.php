@@ -48,6 +48,11 @@ class TraineePolicy
         return $this->owns($user, $trainee);
     }
 
+    public function restore(User $user, Trainee $trainee): Response
+    {
+        return $this->owns($user, $trainee);
+    }
+
     private function owns(User $user, Trainee $trainee): Response
     {
         return $trainee->user_id === $user->id
