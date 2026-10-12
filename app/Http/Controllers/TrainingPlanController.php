@@ -29,7 +29,7 @@ class TrainingPlanController extends Controller
         $trainingPlans = $request->user()
             ->trainingPlans()
             ->with([
-                'scheduledTraining:id,starts_at,ends_at,location',
+                'scheduledTraining:id,starts_at,ends_at,location,status',
                 'trainee:id,name',
                 'trainingGroup:id,name',
             ])
@@ -98,9 +98,13 @@ class TrainingPlanController extends Controller
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(Request $request, TrainingPlan $trainingPlan): Response
+    public function edit(Request $request, TrainingPlan $trainingPlan): Response|RedirectResponse
     {
         Gate::authorize('update', $trainingPlan);
+
+        if ($trainingPlan->status === 'completed' || $trainingPlan->scheduledTraining->status === 'completed') {
+            return to_route('training-plans.show', $trainingPlan);
+        }
 
         return Inertia::render('training-plans/edit', [
             'trainingPlan' => $this->toPageData($this->loadPlan($trainingPlan)),
@@ -147,6 +151,7 @@ class TrainingPlanController extends Controller
         return [
             'scheduledTrainings' => $request->user()
                 ->scheduledTrainings()
+                ->where('status', '!=', 'completed')
                 ->whereDoesntHave('trainingPlan')
                 ->with(['trainee:id,name', 'trainingGroup:id,name'])
                 ->orderBy('starts_at')
@@ -159,6 +164,7 @@ class TrainingPlanController extends Controller
                     'starts_at' => $scheduledTraining->starts_at->toIso8601String(),
                     'ends_at' => $scheduledTraining->ends_at->toIso8601String(),
                     'location' => $scheduledTraining->location,
+                    'status' => $scheduledTraining->status,
                 ]),
             'exercises' => $this->exerciseOptions($request),
         ];
@@ -185,7 +191,7 @@ class TrainingPlanController extends Controller
     private function loadPlan(TrainingPlan $trainingPlan): TrainingPlan
     {
         return $trainingPlan->load([
-            'scheduledTraining:id,starts_at,ends_at,location',
+            'scheduledTraining:id,starts_at,ends_at,location,status',
             'trainee:id,name',
             'trainingGroup:id,name',
             'blocks.exercises',
@@ -212,6 +218,7 @@ class TrainingPlanController extends Controller
                 'starts_at' => $trainingPlan->scheduledTraining->starts_at->toIso8601String(),
                 'ends_at' => $trainingPlan->scheduledTraining->ends_at->toIso8601String(),
                 'location' => $trainingPlan->scheduledTraining->location,
+                'status' => $trainingPlan->scheduledTraining->status,
             ],
         ];
     }
@@ -242,6 +249,7 @@ class TrainingPlanController extends Controller
                 'starts_at' => $trainingPlan->scheduledTraining->starts_at->toIso8601String(),
                 'ends_at' => $trainingPlan->scheduledTraining->ends_at->toIso8601String(),
                 'location' => $trainingPlan->scheduledTraining->location,
+                'status' => $trainingPlan->scheduledTraining->status,
             ],
             'blocks' => $trainingPlan->blocks->map(fn ($block): array => [
                 ...$block->only(['id', 'name', 'duration_minutes', 'position', 'notes']),

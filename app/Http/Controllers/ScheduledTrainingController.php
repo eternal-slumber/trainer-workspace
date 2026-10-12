@@ -103,6 +103,24 @@ class ScheduledTrainingController extends Controller
                 ->findOrFail($scheduledTraining->id);
 
             $attributes = $request->validatedForUpdate($lockedTraining);
+            $trainingPlan = $lockedTraining->trainingPlan()->lockForUpdate()->first();
+
+            if ($trainingPlan !== null
+                && ($lockedTraining->status === 'completed') !== ($trainingPlan->status === 'completed')) {
+                throw ValidationException::withMessages([
+                    'status' => 'Статусы занятия и плана не согласованы. Требуется отдельное исправление данных.',
+                ]);
+            }
+
+            $status = $attributes['status'] ?? $lockedTraining->status;
+
+            if (($lockedTraining->status === 'completed' && $status !== 'completed')
+                || ($trainingPlan !== null && ($status === 'completed') !== ($trainingPlan->status === 'completed'))) {
+                throw ValidationException::withMessages([
+                    'status' => 'Нельзя изменить статус: завершение занятия с планом выполняется через план, а завершённое занятие нельзя вернуть в расписание или отменить.',
+                ]);
+            }
+
             $errors = [];
 
             foreach (['trainee_id', 'training_group_id'] as $field) {
@@ -119,7 +137,7 @@ class ScheduledTrainingController extends Controller
             }
 
             if ($errors !== []) {
-                if ($lockedTraining->trainingPlan()->exists()) {
+                if ($trainingPlan !== null) {
                     throw ValidationException::withMessages($errors);
                 }
 

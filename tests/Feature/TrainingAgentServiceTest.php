@@ -22,6 +22,8 @@ use App\Services\AI\AiResponse;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\Assert;
 
 use function Pest\Laravel\actingAs;
@@ -125,6 +127,84 @@ test('a second plan cannot be generated for the same scheduled training', functi
 
     expect($fakeAiClient->calls)->toBe(0)
         ->and(TrainingPlan::query()->count())->toBe(1);
+});
+
+test('completed trainings reject AI generation even when the supplied model is stale', function () {
+    $user = User::factory()->create();
+    $training = createAgentScheduledTraining($user, trainee: createAgentTrainee($user));
+    ScheduledTraining::query()->whereKey($training->id)->update(['status' => 'completed']);
+    $before = $training->fresh()->getAttributes();
+    $client = fakeAgentResponse('unused');
+
+    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
+        ->assertUnprocessable()->assertJsonValidationErrors('scheduled_training_id');
+    expect(fn () => app(TrainingAgentService::class)->generatePlanForScheduledTraining($user, $training))
+        ->toThrow(ValidationException::class);
+
+    expect($client->calls)->toBe(0)
+        ->and($training->fresh()->getAttributes())->toBe($before);
+    assertNoAgentPlanRecords();
+});
+
+test('AI does not persist a plan if the training is completed during the LLM call', function () {
+    $user = User::factory()->create();
+    $training = createAgentScheduledTraining($user, trainee: createAgentTrainee($user));
+    $exercise = Exercise::factory()->system()->create();
+    $transactionLevel = DB::transactionLevel();
+    $completed = null;
+    $client = fakeAgentResponse(validAgentPlanJson($exercise), beforeResponse: function () use (
+        $training,
+        $transactionLevel,
+        &$completed,
+    ): void {
+        expect(DB::transactionLevel())->toBe($transactionLevel);
+        $this->patchJson(route('scheduled-trainings.update', $training), ['status' => 'completed'])
+            ->assertRedirect();
+        $completed = $training->fresh()->getAttributes();
+    });
+
+    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
+        ->assertUnprocessable()->assertJsonValidationErrors('scheduled_training_id');
+
+    expect($client->calls)->toBe(1)
+        ->and($completed)->not->toBeNull()
+        ->and($training->fresh()->getAttributes())->toBe($completed);
+    assertNoAgentPlanRecords();
+});
+
+test('AI cannot replace a manual plan completed while its response was pending', function () {
+    $user = User::factory()->create();
+    $training = createAgentScheduledTraining($user, trainee: createAgentTrainee($user));
+    $exercise = Exercise::factory()->system()->create();
+    $completed = null;
+    fakeAgentResponse(validAgentPlanJson($exercise), beforeResponse: function () use ($user, $training, &$completed): void {
+        $plan = createExistingAgentPlan($user, $training);
+        $this->postJson(route('training-plans.complete', $plan))->assertRedirect();
+        $completed = $plan->fresh()->getAttributes();
+    });
+
+    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
+        ->assertUnprocessable()->assertJsonValidationErrors('scheduled_training_id');
+
+    expect($completed)->not->toBeNull()
+        ->and(TrainingPlan::query()->sole()->getAttributes())->toBe($completed)
+        ->and($training->fresh()->status)->toBe('completed');
+});
+
+test('AI can still preserve preparation for a training cancelled during its response', function () {
+    $user = User::factory()->create();
+    $training = createAgentScheduledTraining($user, trainee: createAgentTrainee($user));
+    $exercise = Exercise::factory()->system()->create();
+    fakeAgentResponse(validAgentPlanJson($exercise), beforeResponse: function () use ($training): void {
+        $this->patchJson(route('scheduled-trainings.update', $training), ['status' => 'cancelled'])
+            ->assertRedirect();
+    });
+
+    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
+        ->assertRedirect();
+
+    expect(TrainingPlan::query()->sole()->status)->toBe('draft')
+        ->and($training->fresh()->status)->toBe('cancelled');
 });
 
 test('invalid ai json does not create any plan records', function () {
@@ -291,10 +371,12 @@ function createExistingAgentPlan(User $user, ScheduledTraining $scheduledTrainin
 function fakeAgentResponse(
     string $content,
     array $expectedResponseFormat = ['type' => 'json_object'],
+    ?Closure $beforeResponse = null,
 ): FakeTrainingAiClient {
     $fakeAiClient = new FakeTrainingAiClient(
         content: $content,
         expectedResponseFormat: $expectedResponseFormat,
+        beforeResponse: $beforeResponse,
     );
     app()->instance(AiClientInterface::class, $fakeAiClient);
 
@@ -360,6 +442,7 @@ final class FakeTrainingAiClient implements AiClientInterface
         private ?string $content = null,
         private ?Throwable $exception = null,
         private array $expectedResponseFormat = ['type' => 'json_object'],
+        private ?Closure $beforeResponse = null,
     ) {}
 
     public function chat(array $messages, array $options = []): AiResponse
@@ -374,6 +457,8 @@ final class FakeTrainingAiClient implements AiClientInterface
             ->and($options)->toHaveKey('user_id')
             ->and($options['max_tokens'])->toBe(4096)
             ->and($options['response_format'])->toBe($this->expectedResponseFormat);
+
+        ($this->beforeResponse)?->__invoke();
 
         if ($this->exception !== null) {
             throw $this->exception;
