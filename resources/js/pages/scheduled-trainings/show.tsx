@@ -2,6 +2,7 @@ import { Form, Head, Link } from '@inertiajs/react';
 import { ClipboardList, LoaderCircle, Pencil, Sparkles } from 'lucide-react';
 import GenerateTrainingPlanController from '@/actions/App/Http/Controllers/GenerateTrainingPlanController';
 import ScheduledTrainingController from '@/actions/App/Http/Controllers/ScheduledTrainingController';
+import InputError from '@/components/input-error';
 import ResourceDeleteDialog from '@/components/resource-delete-dialog';
 import ScheduledTrainingColorDot from '@/components/scheduled-training-color-dot';
 import ScheduledTrainingStatusBadge from '@/components/scheduled-training-status-badge';
@@ -138,6 +139,11 @@ export default function ScheduledTrainingsShow({
                                     Открыть план
                                 </Link>
                             </Button>
+                        ) : scheduledTraining.status === 'completed' ? (
+                            <p className="text-sm text-muted-foreground">
+                                К завершённому занятию нельзя добавить новый
+                                план.
+                            </p>
                         ) : (
                             <div className="flex flex-wrap gap-3">
                                 <Button variant="outline" asChild>
@@ -159,21 +165,28 @@ export default function ScheduledTrainingsShow({
                                     )}
                                     disableWhileProcessing
                                 >
-                                    {({ processing }) => (
-                                        <Button
-                                            type="submit"
-                                            disabled={processing}
-                                            aria-busy={processing}
-                                        >
-                                            {processing ? (
-                                                <LoaderCircle className="animate-spin" />
-                                            ) : (
-                                                <Sparkles />
-                                            )}
-                                            {processing
-                                                ? 'Генерация…'
-                                                : 'Сгенерировать AI-план'}
-                                        </Button>
+                                    {({ processing, errors }) => (
+                                        <>
+                                            <Button
+                                                type="submit"
+                                                disabled={processing}
+                                                aria-busy={processing}
+                                            >
+                                                {processing ? (
+                                                    <LoaderCircle className="animate-spin" />
+                                                ) : (
+                                                    <Sparkles />
+                                                )}
+                                                {processing
+                                                    ? 'Генерация…'
+                                                    : 'Сгенерировать AI-план'}
+                                            </Button>
+                                            <InputError
+                                                message={
+                                                    errors.scheduled_training_id
+                                                }
+                                            />
+                                        </>
                                     )}
                                 </Form>
                             </div>

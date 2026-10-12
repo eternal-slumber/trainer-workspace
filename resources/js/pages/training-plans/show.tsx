@@ -7,6 +7,7 @@ import {
     Sparkles,
 } from 'lucide-react';
 import TrainingPlanController from '@/actions/App/Http/Controllers/TrainingPlanController';
+import InputError from '@/components/input-error';
 import ResourceDeleteDialog from '@/components/resource-delete-dialog';
 import TrainingNoteSection from '@/components/training-note-section';
 import TrainingPlanStatusBadge from '@/components/training-plan-status-badge';
@@ -91,24 +92,41 @@ export default function TrainingPlansShow({
                     </div>
 
                     <div className="flex flex-wrap gap-3">
-                        {trainingPlan.status !== 'completed' && (
-                            <Form {...complete.form(trainingPlan)}>
-                                {({ processing }) => (
-                                    <Button type="submit" disabled={processing}>
-                                        <CheckCircle2 />
-                                        {processing
-                                            ? 'Завершение…'
-                                            : 'Отметить как проведённую'}
-                                    </Button>
-                                )}
-                            </Form>
-                        )}
-                        <Button variant="outline" asChild>
-                            <Link href={edit(trainingPlan)}>
-                                <Pencil />
-                                Редактировать
-                            </Link>
-                        </Button>
+                        {['draft', 'approved'].includes(trainingPlan.status) &&
+                            trainingPlan.scheduled_training.status ===
+                                'planned' && (
+                                <Form
+                                    {...complete.form(trainingPlan)}
+                                    className="grid gap-1"
+                                >
+                                    {({ processing, errors }) => (
+                                        <>
+                                            <Button
+                                                type="submit"
+                                                disabled={processing}
+                                            >
+                                                <CheckCircle2 />
+                                                {processing
+                                                    ? 'Завершение…'
+                                                    : 'Отметить как проведённую'}
+                                            </Button>
+                                            <InputError
+                                                message={errors.status}
+                                            />
+                                        </>
+                                    )}
+                                </Form>
+                            )}
+                        {trainingPlan.status !== 'completed' &&
+                            trainingPlan.scheduled_training.status !==
+                                'completed' && (
+                                <Button variant="outline" asChild>
+                                    <Link href={edit(trainingPlan)}>
+                                        <Pencil />
+                                        Редактировать
+                                    </Link>
+                                </Button>
+                            )}
                         <ResourceDeleteDialog
                             form={TrainingPlanController.destroy.form(
                                 trainingPlan,
@@ -117,6 +135,22 @@ export default function TrainingPlansShow({
                         />
                     </div>
                 </div>
+
+                {(trainingPlan.status === 'completed') !==
+                    (trainingPlan.scheduled_training.status ===
+                        'completed') && (
+                    <p role="alert" className="text-sm text-destructive">
+                        Статусы занятия и плана не согласованы. Требуется
+                        отдельное исправление данных.
+                    </p>
+                )}
+
+                {trainingPlan.status === 'completed' && (
+                    <p className="text-sm text-muted-foreground">
+                        Завершённый план доступен только для просмотра. Заметки
+                        о тренировке редактируются отдельно.
+                    </p>
+                )}
 
                 <Card className="max-w-5xl">
                     <CardContent className="grid gap-6 sm:grid-cols-2">

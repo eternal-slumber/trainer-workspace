@@ -1,3 +1,5 @@
+import type { ScheduledTrainingStatus } from './scheduled-training';
+
 export type TrainingPlanStatus = 'draft' | 'approved' | 'completed';
 export type TrainingNoteIntensity = 'low' | 'medium' | 'high';
 export type TrainingNoteResult = 'bad' | 'normal' | 'good';
@@ -71,6 +73,7 @@ export type ScheduledTrainingPlanOption = {
     starts_at: string;
     ends_at: string;
     location: string;
+    status: ScheduledTrainingStatus;
 };
 
 export type ExercisePlanOption = {

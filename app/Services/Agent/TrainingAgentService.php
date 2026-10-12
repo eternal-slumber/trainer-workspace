@@ -11,6 +11,7 @@ use App\Services\Agent\DTO\ValidatedTrainingPlanBlock;
 use App\Services\AI\AiClientInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 class TrainingAgentService
 {
@@ -26,7 +27,8 @@ class TrainingAgentService
         ScheduledTraining $scheduledTraining,
     ): TrainingPlan {
         Gate::forUser($user)->authorize('generateTrainingPlan', $scheduledTraining);
-        $this->ensurePlanDoesNotExist($scheduledTraining);
+        $scheduledTraining = $user->scheduledTrainings()->findOrFail($scheduledTraining->id);
+        $this->ensurePlanCanBeCreated($scheduledTraining);
 
         $context = $this->contextBuilder->buildForScheduledTraining($user, $scheduledTraining);
         $messages = $this->promptBuilder->buildTrainingPlanPrompt($context);
@@ -44,7 +46,7 @@ class TrainingAgentService
                     ->lockForUpdate()
                     ->findOrFail($scheduledTraining->id);
 
-                $this->ensurePlanDoesNotExist($lockedScheduledTraining);
+                $this->ensurePlanCanBeCreated($lockedScheduledTraining);
 
                 return $this->storePlan($user, $lockedScheduledTraining, $validatedPlan);
             },
@@ -52,8 +54,14 @@ class TrainingAgentService
         );
     }
 
-    private function ensurePlanDoesNotExist(ScheduledTraining $scheduledTraining): void
+    private function ensurePlanCanBeCreated(ScheduledTraining $scheduledTraining): void
     {
+        if ($scheduledTraining->status === 'completed') {
+            throw ValidationException::withMessages([
+                'scheduled_training_id' => 'Нельзя создать план для завершённого занятия.',
+            ]);
+        }
+
         if ($scheduledTraining->trainingPlan()->exists()) {
             throw new TrainingPlanAlreadyExistsException(
                 'Для этой тренировки план уже создан.',

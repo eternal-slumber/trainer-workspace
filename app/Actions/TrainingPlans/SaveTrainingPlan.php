@@ -8,6 +8,7 @@ use App\Models\TrainingPlanBlock;
 use App\Models\User;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SaveTrainingPlan
 {
@@ -21,6 +22,18 @@ class SaveTrainingPlan
             $scheduledTraining = $user->scheduledTrainings()
                 ->lockForUpdate()
                 ->findOrFail($scheduledTraining->id);
+
+            if ($scheduledTraining->status === 'completed') {
+                throw ValidationException::withMessages([
+                    'scheduled_training_id' => 'Нельзя создать план для завершённого занятия.',
+                ]);
+            }
+
+            if ($scheduledTraining->trainingPlan()->lockForUpdate()->first(['id']) !== null) {
+                throw ValidationException::withMessages([
+                    'scheduled_training_id' => 'Для этого занятия уже создан план.',
+                ]);
+            }
 
             $trainingPlan = new TrainingPlan;
             $trainingPlan->forceFill([
@@ -44,6 +57,15 @@ class SaveTrainingPlan
     public function update(TrainingPlan $trainingPlan, array $attributes): TrainingPlan
     {
         return DB::transaction(function () use ($trainingPlan, $attributes): TrainingPlan {
+            $scheduledTraining = $trainingPlan->scheduledTraining()->lockForUpdate()->firstOrFail();
+            $trainingPlan = $scheduledTraining->trainingPlan()->lockForUpdate()->findOrFail($trainingPlan->id);
+
+            if ($scheduledTraining->status === 'completed' || $trainingPlan->status === 'completed') {
+                throw ValidationException::withMessages([
+                    'status' => 'Нельзя изменить план: занятие или план уже завершены.',
+                ]);
+            }
+
             $trainingPlan->update($this->planAttributes($attributes));
             $this->replaceBlocks($trainingPlan, $attributes['blocks']);
 

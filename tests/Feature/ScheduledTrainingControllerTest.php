@@ -244,6 +244,11 @@ test('a plan prevents subject changes without modifying any saved data', functio
     $scheduledTraining = createSubjectScheduledTraining($user, $originalType);
     $replacementTraining = createSubjectScheduledTraining($user, $replacementType);
     $plan = createScheduledSubjectPlan($scheduledTraining, $planStatus, $planSource);
+
+    if ($planStatus === 'completed') {
+        $scheduledTraining->update(['status' => 'completed']);
+    }
+
     $trainingBefore = $scheduledTraining->fresh()->getAttributes();
     $planBefore = $plan->fresh(['blocks.exercises'])->toArray();
     $changedFields = $originalType === $replacementType
