@@ -18,12 +18,51 @@ use App\Services\Agent\DTO\TrainingExerciseItem;
 use App\Services\Agent\DTO\TrainingHistoryItem;
 use App\Services\Agent\DTO\TrainingMemoryItem;
 use App\Services\Agent\DTO\TrainingNoteItem;
+use App\Services\AI\AiMessage;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\ValidationException;
 use LogicException;
 
 class TrainingContextBuilder
 {
+    public function __construct(private TrainingPromptBuilder $promptBuilder) {}
+
+    /** @return array{context: TrainingContext, messages: list<AiMessage>, options: array<string, mixed>, hash: string} */
+    public function generationInput(User $user, ScheduledTraining $training): array
+    {
+        $provider = (string) config('ai.provider');
+        $timeout = (int) config("ai.{$provider}.timeout", config('ai.timeout'));
+        if ($timeout <= 0 || $timeout > 300) {
+            throw ValidationException::withMessages(['scheduled_training_id' => 'AI timeout должен быть от 1 до 300 секунд.']);
+        }
+        $context = $this->buildForScheduledTraining($user, $training);
+        $messages = $this->promptBuilder->buildTrainingPlanPrompt($context);
+        $options = ['user_id' => $user->id, 'max_tokens' => (int) config('ai.max_tokens'),
+            'response_format' => config("ai.{$provider}.response_format", ['type' => 'json_object']), 'private' => true];
+        $data = ['schema_version' => 1, 'user_id' => $user->id,
+            'starts_at' => $training->starts_at->utc()->format('Y-m-d\TH:i:s.u\Z'),
+            'ends_at' => $training->ends_at->utc()->format('Y-m-d\TH:i:s.u\Z'),
+            'messages' => array_map(fn ($message): array => $message->toArray(), $messages),
+            'provider' => $provider, 'model' => config('ai.model'), 'base_url' => rtrim((string) config('ai.base_url'), '/'),
+            'options' => ['max_tokens' => $options['max_tokens'], 'response_format' => $options['response_format']]];
+
+        return ['context' => $context, 'messages' => $messages, 'options' => $options,
+            'hash' => hash('sha256', json_encode($this->canonical($data), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))];
+    }
+
+    private function canonical(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return array_map($this->canonical(...), $value);
+    }
+
     public function buildForScheduledTraining(
         User $user,
         ScheduledTraining $scheduledTraining,
@@ -33,8 +72,8 @@ class TrainingContextBuilder
         }
 
         $scheduledTraining->load([
-            'trainee:id,user_id,name,age,level,goal,restrictions',
-            'trainingGroup:id,user_id,name,sport_type,age_range,level,goal,restrictions',
+            'trainee:id,user_id,name,age,level,goal,restrictions,archived_at',
+            'trainingGroup:id,user_id,name,sport_type,age_range,level,goal,restrictions,archived_at',
         ]);
 
         [$target, $targetColumn] = $this->resolveTarget($user, $scheduledTraining);
@@ -137,8 +176,8 @@ class TrainingContextBuilder
                 ->where('user_id', $user->id))
             ->with([
                 'scheduledTraining:id,user_id,starts_at',
-                'blocks:id,training_plan_id,name,duration_minutes,position,notes',
-                'blocks.exercises:id,training_plan_block_id,name,description,duration_minutes,sets,repetitions,rest_seconds,position,notes',
+                'blocks' => fn ($query) => $query->select(['id', 'training_plan_id', 'name', 'duration_minutes', 'position', 'notes'])->orderBy('id'),
+                'blocks.exercises' => fn ($query) => $query->select(['id', 'training_plan_block_id', 'name', 'description', 'duration_minutes', 'sets', 'repetitions', 'rest_seconds', 'position', 'notes'])->orderBy('id'),
                 'trainingNote:id,user_id,training_plan_id,intensity,result,tags,note',
             ])
             ->latestScheduled()
@@ -247,6 +286,7 @@ class TrainingContextBuilder
             ])
             ->orderByDesc('is_system')
             ->orderBy('name')
+            ->orderBy('id')
             ->limit(50)
             ->get()
             ->map(fn (Exercise $exercise): TrainingExerciseItem => new TrainingExerciseItem(

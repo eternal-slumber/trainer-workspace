@@ -84,6 +84,26 @@ test('openrouter sends an openai compatible request and logs its preview', funct
         ->and($requestLog->error_message)->toBeNull();
 });
 
+test('private generation requests never log user inputs or provider content', function () {
+    configureTestAi('openrouter');
+    Http::fake(['*' => Http::response(['choices' => [['message' => ['content' => 'Sensitive result']]]])]);
+    resolveTestAiClient()->chat([AiMessage::user('Sensitive user context')], ['private' => true]);
+    $log = AiRequestLog::query()->sole();
+    expect($log->prompt_preview)->toBeNull()->and($log->response_preview)->toBeNull();
+});
+
+test('provider failure classification prevents blind retries after unknown outcomes', function (int $status, bool $unknown, bool $retry) {
+    configureTestAi('openrouter');
+    Http::fake(['*' => Http::response(['error' => 'Private provider body'], $status, ['Retry-After' => '90'])]);
+    try {
+        resolveTestAiClient()->chat([AiMessage::user('Sensitive user context')], ['private' => true]);
+        $this->fail('Expected provider failure');
+    } catch (AiClientException $exception) {
+        expect($exception->outcomeUnknown)->toBe($unknown)->and($exception->safeToRetry)->toBe($retry)
+            ->and(AiRequestLog::query()->sole()->prompt_preview)->toBeNull();
+    }
+})->with([[429, false, true], [400, false, false], [503, true, false]]);
+
 test('lm studio works without an api key', function () {
     configureTestAi('lmstudio', [
         'base_url' => 'http://host.docker.internal:1234/v1',

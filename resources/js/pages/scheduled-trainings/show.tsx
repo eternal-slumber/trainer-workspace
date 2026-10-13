@@ -1,11 +1,14 @@
-import { Form, Head, Link } from '@inertiajs/react';
+import { Form, Head, Link, router, usePoll } from '@inertiajs/react';
 import { ClipboardList, LoaderCircle, Pencil, Sparkles } from 'lucide-react';
-import GenerateTrainingPlanController from '@/actions/App/Http/Controllers/GenerateTrainingPlanController';
+import { useEffect, useRef } from 'react';
+import ReserveTrainingPlanGenerationController from '@/actions/App/Http/Controllers/ReserveTrainingPlanGenerationController';
 import ScheduledTrainingController from '@/actions/App/Http/Controllers/ScheduledTrainingController';
+import TrainingPlanGenerationController from '@/actions/App/Http/Controllers/TrainingPlanGenerationController';
 import InputError from '@/components/input-error';
 import ResourceDeleteDialog from '@/components/resource-delete-dialog';
 import ScheduledTrainingColorDot from '@/components/scheduled-training-color-dot';
 import ScheduledTrainingStatusBadge from '@/components/scheduled-training-status-badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { getScheduledTrainingColor } from '@/lib/scheduled-training-colors';
@@ -18,6 +21,22 @@ import type { ScheduledTraining } from '@/types';
 
 type ScheduledTrainingsShowProps = {
     scheduledTraining: ScheduledTraining;
+    generation: {
+        id: string;
+        status:
+            | 'queued'
+            | 'running'
+            | 'uncertain'
+            | 'succeeded'
+            | 'failed'
+            | 'stale'
+            | 'cancelled';
+        training_plan_id: number | null;
+        error_code: string | null;
+        cancel_requested_at: string | null;
+    } | null;
+    generationRequestKey: string;
+    canGenerateAI: boolean;
 };
 
 const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -27,8 +46,54 @@ const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
 
 export default function ScheduledTrainingsShow({
     scheduledTraining,
+    generation,
+    generationRequestKey,
+    canGenerateAI,
 }: ScheduledTrainingsShowProps) {
     const colorOption = getScheduledTrainingColor(scheduledTraining.color);
+    const pending =
+        generation?.status === 'queued' || generation?.status === 'running';
+    const occupied = pending || generation?.status === 'uncertain';
+    const watching = useRef(pending);
+    const { start, stop } = usePoll(
+        2000,
+        {
+            only: [
+                'scheduledTraining',
+                'generation',
+                'generationRequestKey',
+                'canGenerateAI',
+            ],
+        },
+        { autoStart: false },
+    );
+    useEffect(() => {
+        if (pending) {
+            watching.current = true;
+            start();
+        } else {
+            stop();
+        }
+    }, [pending, start, stop]);
+    useEffect(() => {
+        if (
+            generation?.status === 'succeeded' &&
+            generation.training_plan_id &&
+            watching.current
+        ) {
+            watching.current = false;
+            router.visit(showTrainingPlan(generation.training_plan_id));
+        }
+    }, [generation]);
+    const labels = {
+        queued: 'Ожидает обработки',
+        running: 'Создаём AI-план',
+        uncertain: 'Результат запроса неизвестен',
+        succeeded: 'AI-план готов',
+        failed: 'Не удалось создать план',
+        stale: 'Данные изменились — запустите генерацию заново',
+        cancelled: 'Генерация отменена',
+    };
 
     return (
         <>
@@ -118,6 +183,73 @@ export default function ScheduledTrainingsShow({
                     </CardContent>
                 </Card>
 
+                {generation && (
+                    <Alert className="max-w-3xl">
+                        <AlertTitle>
+                            {generation.cancel_requested_at && pending
+                                ? 'Ожидаем завершения отменённого запроса'
+                                : labels[generation.status]}
+                        </AlertTitle>
+                        <AlertDescription>
+                            {generation.status === 'uncertain' && (
+                                <p>
+                                    Провайдер мог обработать запрос.
+                                    Автоматического повтора не будет. Новый
+                                    запуск может привести к дополнительным
+                                    расходам.
+                                </p>
+                            )}
+                            {generation.status === 'failed' && (
+                                <p>
+                                    {generation.error_code ===
+                                        'configuration_error' ||
+                                    generation.error_code ===
+                                        'provider_rejected'
+                                        ? 'Проверьте настройки AI-провайдера или попробуйте позже.'
+                                        : 'Результат не сохранён. Можно запустить новую генерацию.'}
+                                </p>
+                            )}
+                            {occupied &&
+                                (!generation.cancel_requested_at ||
+                                    generation.status === 'uncertain') && (
+                                    <Form
+                                        {...TrainingPlanGenerationController.cancel.form(
+                                            generation,
+                                        )}
+                                    >
+                                        {({ processing, errors }) => (
+                                            <>
+                                                {generation.status ===
+                                                    'uncertain' && (
+                                                    <input
+                                                        type="hidden"
+                                                        name="acknowledge_unknown"
+                                                        value="1"
+                                                    />
+                                                )}
+                                                <Button
+                                                    variant="outline"
+                                                    type="submit"
+                                                    disabled={processing}
+                                                >
+                                                    {generation.status ===
+                                                    'uncertain'
+                                                        ? 'Закрыть операцию с неизвестным результатом'
+                                                        : 'Отменить генерацию'}
+                                                </Button>
+                                                <InputError
+                                                    message={
+                                                        errors.acknowledge_unknown
+                                                    }
+                                                />
+                                            </>
+                                        )}
+                                    </Form>
+                                )}
+                        </AlertDescription>
+                    </Alert>
+                )}
+
                 <Card className="max-w-3xl">
                     <CardContent className="flex flex-wrap items-center justify-between gap-4">
                         <div className="grid gap-1">
@@ -160,16 +292,28 @@ export default function ScheduledTrainingsShow({
                                     </Link>
                                 </Button>
                                 <Form
-                                    {...GenerateTrainingPlanController.form(
+                                    {...ReserveTrainingPlanGenerationController.form(
                                         scheduledTraining,
                                     )}
                                     disableWhileProcessing
+                                    onBefore={() => {
+                                        watching.current = true;
+                                    }}
                                 >
                                     {({ processing, errors }) => (
                                         <>
+                                            <input
+                                                type="hidden"
+                                                name="request_key"
+                                                value={generationRequestKey}
+                                            />
                                             <Button
                                                 type="submit"
-                                                disabled={processing}
+                                                disabled={
+                                                    processing ||
+                                                    occupied ||
+                                                    !canGenerateAI
+                                                }
                                                 aria-busy={processing}
                                             >
                                                 {processing ? (
@@ -181,6 +325,9 @@ export default function ScheduledTrainingsShow({
                                                     ? 'Генерация…'
                                                     : 'Сгенерировать AI-план'}
                                             </Button>
+                                            <InputError
+                                                message={errors.request_key}
+                                            />
                                             <InputError
                                                 message={
                                                     errors.scheduled_training_id

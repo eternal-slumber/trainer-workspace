@@ -44,6 +44,15 @@ return [
             'after_commit' => false,
         ],
 
+        'training-plan-generations' => [
+            'driver' => 'database',
+            'connection' => 'pgsql',
+            'table' => 'jobs',
+            'queue' => 'training-plan-generations',
+            'retry_after' => 420,
+            'after_commit' => false,
+        ],
+
         'beanstalkd' => [
             'driver' => 'beanstalkd',
             'host' => env('BEANSTALKD_QUEUE_HOST', 'localhost'),

@@ -8,12 +8,14 @@ use App\Http\Requests\UpdateScheduledTrainingRequest;
 use App\Models\ScheduledTraining;
 use App\Models\Trainee;
 use App\Models\TrainingGroup;
+use App\Models\TrainingPlanGeneration;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -68,14 +70,21 @@ class ScheduledTrainingController extends Controller
     {
         Gate::authorize('view', $scheduledTraining);
 
+        $generation = TrainingPlanGeneration::query()->where('user_id', $scheduledTraining->user_id)
+            ->where('scheduled_training_id', $scheduledTraining->id)
+            ->orderByRaw("CASE WHEN status IN ('queued', 'running', 'uncertain') THEN 0 ELSE 1 END")
+            ->latest('created_at')->latest('id')->first();
+        $scheduledTraining->load(['trainee:id,user_id,name,archived_at', 'trainingGroup:id,user_id,name,archived_at',
+            'trainingPlan:id,scheduled_training_id,title,status']);
+        $subject = $scheduledTraining->trainee ?? $scheduledTraining->trainingGroup;
+
         return Inertia::render('scheduled-trainings/show', [
-            'scheduledTraining' => $this->toPageData(
-                $scheduledTraining->load([
-                    'trainee:id,name',
-                    'trainingGroup:id,name',
-                    'trainingPlan:id,scheduled_training_id,title,status',
-                ]),
-            ),
+            'scheduledTraining' => $this->toPageData($scheduledTraining),
+            'generation' => $generation?->receipt(),
+            'generationRequestKey' => $generation !== null && in_array($generation->status, TrainingPlanGeneration::ACTIVE_STATUSES, true)
+                ? $generation->request_key : (string) Str::uuid(),
+            'canGenerateAI' => $scheduledTraining->status === 'planned' && $scheduledTraining->trainingPlan === null
+                && $subject !== null && $subject->getAttribute('archived_at') === null,
         ]);
     }
 
@@ -147,6 +156,11 @@ class ScheduledTrainingController extends Controller
                 ]);
             }
 
+            if (($attributes['status'] ?? null) === 'cancelled' && $lockedTraining->status !== 'cancelled') {
+                TrainingPlanGeneration::query()->where('scheduled_training_id', $lockedTraining->id)
+                    ->whereIn('status', TrainingPlanGeneration::ACTIVE_STATUSES)
+                    ->update(['cancel_requested_at' => now()]);
+            }
             $lockedTraining->update($attributes);
         });
 

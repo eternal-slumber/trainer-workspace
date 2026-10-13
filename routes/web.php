@@ -8,11 +8,13 @@ use App\Http\Controllers\DuplicateScheduledTrainingController;
 use App\Http\Controllers\ExerciseController;
 use App\Http\Controllers\GenerateTrainingPlanController;
 use App\Http\Controllers\RescheduleScheduledTrainingController;
+use App\Http\Controllers\ReserveTrainingPlanGenerationController;
 use App\Http\Controllers\ScheduledTrainingController;
 use App\Http\Controllers\TraineeController;
 use App\Http\Controllers\TrainingGroupController;
 use App\Http\Controllers\TrainingNoteController;
 use App\Http\Controllers\TrainingPlanController;
+use App\Http\Controllers\TrainingPlanGenerationController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
@@ -32,6 +34,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         'scheduled-trainings/{scheduled_training}/generate-training-plan',
         GenerateTrainingPlanController::class,
     )->name('scheduled-trainings.generate-training-plan');
+    Route::post(
+        'scheduled-trainings/{scheduled_training}/training-plan-generations',
+        ReserveTrainingPlanGenerationController::class,
+    )->name('scheduled-trainings.training-plan-generations.store');
+    Route::get('training-plan-generations/{training_plan_generation}', [TrainingPlanGenerationController::class, 'show'])
+        ->name('training-plan-generations.show');
+    Route::post('training-plan-generations/{training_plan_generation}/cancel', [TrainingPlanGenerationController::class, 'cancel'])
+        ->name('training-plan-generations.cancel');
     Route::resource('trainees', TraineeController::class);
     Route::post('trainees/{trainee}/restore', [TraineeController::class, 'restore'])->name('trainees.restore');
     Route::resource('training-groups', TrainingGroupController::class);
