@@ -31,7 +31,8 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
         $this->validateMessages($messages);
 
         $startedAt = hrtime(true);
-        $promptPreview = $this->promptPreview($messages);
+        $private = ($options['private'] ?? false) === true;
+        $promptPreview = $private ? null : $this->promptPreview($messages);
         $userId = is_numeric($options['user_id'] ?? null) ? (int) $options['user_id'] : null;
 
         try {
@@ -44,7 +45,7 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
             $rawResponse = $response->json();
 
             if (! is_array($rawResponse)) {
-                throw new AiClientException('AI provider returned an invalid JSON response.');
+                throw new AiClientException('AI provider returned an invalid JSON response.', outcomeUnknown: false);
             }
 
             $content = $this->responseContent($rawResponse);
@@ -59,7 +60,7 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
                 'model' => is_string($model) ? $model : $this->model(),
                 'status' => 'success',
                 'prompt_preview' => $promptPreview,
-                'response_preview' => $this->preview($content),
+                'response_preview' => $private ? null : $this->preview($content),
                 'error_message' => null,
                 'duration_ms' => $durationMs,
             ]);
@@ -81,7 +82,7 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
                 'status' => 'error',
                 'prompt_preview' => $promptPreview,
                 'response_preview' => null,
-                'error_message' => $this->safeErrorMessage($exception),
+                'error_message' => $private ? 'AI request failed.' : $this->safeErrorMessage($exception),
                 'duration_ms' => $durationMs,
             ]);
 
@@ -89,7 +90,7 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
                 'provider' => $this->provider(),
                 'model' => $this->model(),
                 'duration_ms' => $durationMs,
-                'error' => $this->safeErrorMessage($exception),
+                'error' => $private ? $exception::class : $this->safeErrorMessage($exception),
             ]);
 
             if ($exception instanceof AiClientException) {
@@ -99,6 +100,13 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
             throw new AiClientException(
                 "Не удалось получить ответ от AI-провайдера {$this->provider()}.",
                 previous: $exception,
+                outcomeUnknown: ! ($exception instanceof InvalidArgumentException
+                    || ($exception instanceof RequestException && $exception->response->status() < 500)),
+                safeToRetry: $exception instanceof RequestException && $exception->response->status() === 429,
+                retryAfter: $exception instanceof RequestException ? min(3600, max(0,
+                    is_numeric($exception->response->header('Retry-After'))
+                        ? (int) $exception->response->header('Retry-After')
+                        : (int) (strtotime($exception->response->header('Retry-After')) ?: time()) - time())) : 0,
             );
         }
     }
@@ -185,7 +193,7 @@ abstract class OpenAiCompatibleClient implements AiClientInterface
         $content = trim((string) $content);
 
         if ($content === '') {
-            throw new AiClientException('AI returned empty content.');
+            throw new AiClientException('AI returned empty content.', outcomeUnknown: false);
         }
 
         return $content;

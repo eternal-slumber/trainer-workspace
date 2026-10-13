@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\TrainingPlans\ReserveTrainingPlanGeneration;
 use App\Models\Exercise;
 use App\Models\ScheduledTraining;
 use App\Models\Trainee;
@@ -7,27 +8,27 @@ use App\Models\TrainingGroup;
 use App\Models\TrainingPlan;
 use App\Models\TrainingPlanBlock;
 use App\Models\TrainingPlanExercise;
+use App\Models\TrainingPlanGeneration;
 use App\Models\User;
 use App\Services\Agent\DTO\TrainingContext;
 use App\Services\Agent\DTO\ValidatedTrainingPlan;
 use App\Services\Agent\DTO\ValidatedTrainingPlanBlock;
 use App\Services\Agent\DTO\ValidatedTrainingPlanExercise;
 use App\Services\Agent\TrainingAgentService;
-use App\Services\Agent\TrainingPlanAlreadyExistsException;
 use App\Services\Agent\TrainingPlanValidator;
 use App\Services\AI\AiClientException;
 use App\Services\AI\AiClientInterface;
 use App\Services\AI\AiMessage;
 use App\Services\AI\AiResponse;
-use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use Illuminate\Validation\ValidationException;
-use PHPUnit\Framework\Assert;
 
 use function Pest\Laravel\actingAs;
-use function Pest\Laravel\post;
+use function Pest\Laravel\postJson;
 
 uses(RefreshDatabase::class);
 
@@ -46,11 +47,11 @@ test('ai service creates a draft group plan with blocks and exercises', function
     fakeAgentResponse(validAgentPlanJson($exercise));
 
     actingAs($user);
-    $response = post(route('scheduled-trainings.generate-training-plan', $scheduledTraining));
+    $response = postAgentGeneration($scheduledTraining);
 
     $trainingPlan = TrainingPlan::query()->sole()->load('blocks.exercises');
 
-    $response->assertRedirect(route('training-plans.show', $trainingPlan));
+    $response->assertAccepted();
     expect($trainingPlan->user->is($user))->toBeTrue()
         ->and($trainingPlan->scheduled_training_id)->toBe($scheduledTraining->id)
         ->and($trainingPlan->training_group_id)->toBe($trainingGroup->id)
@@ -74,8 +75,7 @@ test('ai plan inherits its trainee', function () {
     $exercise = Exercise::factory()->system()->create();
     fakeAgentResponse(validAgentPlanJson($exercise));
 
-    $trainingPlan = app(TrainingAgentService::class)
-        ->generatePlanForScheduledTraining($user, $scheduledTraining);
+    $trainingPlan = runAgentPlan($user, $scheduledTraining);
 
     expect($trainingPlan->trainee_id)->toBe($trainee->id)
         ->and($trainingPlan->training_group_id)->toBeNull()
@@ -91,8 +91,7 @@ test('lm studio generation uses text response format', function () {
     $exercise = Exercise::factory()->system()->create();
     fakeAgentResponse(validAgentPlanJson($exercise), ['type' => 'text']);
 
-    $trainingPlan = app(TrainingAgentService::class)
-        ->generatePlanForScheduledTraining($user, $scheduledTraining);
+    $trainingPlan = runAgentPlan($user, $scheduledTraining);
 
     expect($trainingPlan->source)->toBe('ai');
 });
@@ -106,7 +105,7 @@ test('another users scheduled training cannot be generated', function () {
     $fakeAiClient = fakeAgentResponse('unused');
 
     actingAs($user);
-    post(route('scheduled-trainings.generate-training-plan', $scheduledTraining))
+    postAgentGeneration($scheduledTraining)
         ->assertNotFound();
 
     expect($fakeAiClient->calls)->toBe(0)
@@ -121,9 +120,8 @@ test('a second plan cannot be generated for the same scheduled training', functi
 
     $fakeAiClient = fakeAgentResponse('unused');
 
-    expect(fn () => app(TrainingAgentService::class)
-        ->generatePlanForScheduledTraining($user, $scheduledTraining))
-        ->toThrow(TrainingPlanAlreadyExistsException::class);
+    expect(fn () => app(ReserveTrainingPlanGeneration::class)->execute($user, $scheduledTraining, (string) Str::uuid()))
+        ->toThrow(ValidationException::class);
 
     expect($fakeAiClient->calls)->toBe(0)
         ->and(TrainingPlan::query()->count())->toBe(1);
@@ -136,9 +134,9 @@ test('completed trainings reject AI generation even when the supplied model is s
     $before = $training->fresh()->getAttributes();
     $client = fakeAgentResponse('unused');
 
-    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
+    $this->actingAs($user)->postJson(route('scheduled-trainings.training-plan-generations.store', $training), ['request_key' => (string) Str::uuid()])
         ->assertUnprocessable()->assertJsonValidationErrors('scheduled_training_id');
-    expect(fn () => app(TrainingAgentService::class)->generatePlanForScheduledTraining($user, $training))
+    expect(fn () => app(ReserveTrainingPlanGeneration::class)->execute($user, $training, (string) Str::uuid()))
         ->toThrow(ValidationException::class);
 
     expect($client->calls)->toBe(0)
@@ -163,8 +161,9 @@ test('AI does not persist a plan if the training is completed during the LLM cal
         $completed = $training->fresh()->getAttributes();
     });
 
-    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
-        ->assertUnprocessable()->assertJsonValidationErrors('scheduled_training_id');
+    actingAs($user);
+    postAgentGeneration($training)->assertAccepted();
+    expect(TrainingPlanGeneration::query()->sole()->status)->toBe('cancelled');
 
     expect($client->calls)->toBe(1)
         ->and($completed)->not->toBeNull()
@@ -183,15 +182,16 @@ test('AI cannot replace a manual plan completed while its response was pending',
         $completed = $plan->fresh()->getAttributes();
     });
 
-    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
-        ->assertUnprocessable()->assertJsonValidationErrors('scheduled_training_id');
+    actingAs($user);
+    postAgentGeneration($training)->assertAccepted();
+    expect(TrainingPlanGeneration::query()->sole()->status)->toBe('cancelled');
 
     expect($completed)->not->toBeNull()
         ->and(TrainingPlan::query()->sole()->getAttributes())->toBe($completed)
         ->and($training->fresh()->status)->toBe('completed');
 });
 
-test('AI can still preserve preparation for a training cancelled during its response', function () {
+test('AI discards preparation for a training cancelled during its response', function () {
     $user = User::factory()->create();
     $training = createAgentScheduledTraining($user, trainee: createAgentTrainee($user));
     $exercise = Exercise::factory()->system()->create();
@@ -200,11 +200,12 @@ test('AI can still preserve preparation for a training cancelled during its resp
             ->assertRedirect();
     });
 
-    $this->actingAs($user)->postJson(route('scheduled-trainings.generate-training-plan', $training))
-        ->assertRedirect();
+    actingAs($user);
+    postAgentGeneration($training)->assertAccepted();
 
-    expect(TrainingPlan::query()->sole()->status)->toBe('draft')
+    expect(TrainingPlanGeneration::query()->sole()->status)->toBe('cancelled')
         ->and($training->fresh()->status)->toBe('cancelled');
+    assertNoAgentPlanRecords();
 });
 
 test('invalid ai json does not create any plan records', function () {
@@ -215,12 +216,7 @@ test('invalid ai json does not create any plan records', function () {
     fakeAgentResponse('{"title":');
 
     actingAs($user);
-    post(
-        route('scheduled-trainings.generate-training-plan', $scheduledTraining),
-        [],
-        ['HTTP_REFERER' => route('scheduled-trainings.show', $scheduledTraining)],
-    )
-        ->assertRedirect(route('scheduled-trainings.show', $scheduledTraining));
+    postAgentGeneration($scheduledTraining)->assertAccepted();
 
     assertNoAgentPlanRecords();
 });
@@ -235,12 +231,7 @@ test('exercise outside the context does not create any plan records', function (
     fakeAgentResponse(json_encode($payload, JSON_THROW_ON_ERROR));
 
     actingAs($user);
-    post(
-        route('scheduled-trainings.generate-training-plan', $scheduledTraining),
-        [],
-        ['HTTP_REFERER' => route('scheduled-trainings.show', $scheduledTraining)],
-    )
-        ->assertRedirect(route('scheduled-trainings.show', $scheduledTraining));
+    postAgentGeneration($scheduledTraining)->assertAccepted();
 
     assertNoAgentPlanRecords();
 });
@@ -254,12 +245,7 @@ test('ai client failure does not create a plan', function () {
     fakeAgentFailure(new AiClientException('AI недоступен.'));
 
     actingAs($user);
-    post(
-        route('scheduled-trainings.generate-training-plan', $scheduledTraining),
-        [],
-        ['HTTP_REFERER' => route('scheduled-trainings.show', $scheduledTraining)],
-    )
-        ->assertRedirect(route('scheduled-trainings.show', $scheduledTraining));
+    postAgentGeneration($scheduledTraining)->assertAccepted();
 
     assertNoAgentPlanRecords();
 });
@@ -305,16 +291,10 @@ test('database error rolls back a partially persisted plan', function () {
         ),
     );
 
-    try {
-        app(TrainingAgentService::class)
-            ->generatePlanForScheduledTraining($user, $scheduledTraining);
-    } catch (QueryException) {
-        assertNoAgentPlanRecords();
-
-        return;
-    }
-
-    Assert::fail('Expected a foreign key violation.');
+    $generation = app(ReserveTrainingPlanGeneration::class)->execute($user, $scheduledTraining, (string) Str::uuid());
+    app(TrainingAgentService::class)->processGeneration($generation->id);
+    expect($generation->fresh()->status)->toBe('stale');
+    assertNoAgentPlanRecords();
 });
 
 function createAgentTrainingGroup(User $user): TrainingGroup
@@ -480,4 +460,22 @@ final class StubTrainingPlanValidator extends TrainingPlanValidator
     {
         return $this->validatedPlan;
     }
+}
+
+function postAgentGeneration(ScheduledTraining $training): TestResponse
+{
+    $response = postJson(route('scheduled-trainings.training-plan-generations.store', $training), ['request_key' => (string) Str::uuid()]);
+    if ($response->getStatusCode() === 202) {
+        app(TrainingAgentService::class)->processGeneration($response->json('generation.id'));
+    }
+
+    return $response;
+}
+
+function runAgentPlan(User $user, ScheduledTraining $training): TrainingPlan
+{
+    $generation = app(ReserveTrainingPlanGeneration::class)->execute($user, $training, (string) Str::uuid());
+    app(TrainingAgentService::class)->processGeneration($generation->id);
+
+    return $training->trainingPlan()->sole();
 }
