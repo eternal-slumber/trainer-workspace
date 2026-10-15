@@ -72,6 +72,12 @@ class TrainingPlan extends Model
         return $this->hasOne(TrainingNote::class);
     }
 
+    /** @return HasOne<TrainingSession, $this> */
+    public function trainingSession(): HasOne
+    {
+        return $this->hasOne(TrainingSession::class);
+    }
+
     /**
      * @param  Builder<TrainingPlan>  $query
      * @return Builder<TrainingPlan>

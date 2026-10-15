@@ -74,6 +74,12 @@ class ScheduledTraining extends Model
         return $this->hasOne(TrainingPlan::class);
     }
 
+    /** @return HasOne<TrainingSession, $this> */
+    public function trainingSession(): HasOne
+    {
+        return $this->hasOne(TrainingSession::class);
+    }
+
     /**
      * @return array<string, string>
      */

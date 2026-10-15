@@ -59,6 +59,12 @@ class TrainingGroup extends Model
         return $this->hasMany(TrainingPlan::class);
     }
 
+    /** @return HasMany<TrainingSession, $this> */
+    public function trainingSessions(): HasMany
+    {
+        return $this->hasMany(TrainingSession::class);
+    }
+
     /** @return HasMany<TrainingNote, $this> */
     public function trainingNotes(): HasMany
     {
